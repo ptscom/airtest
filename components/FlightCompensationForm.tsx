@@ -9,12 +9,16 @@ const today = getTodayInUae();
 export default function FlightCompensationForm() {
   const [flightNumber, setFlightNumber] = useState("");
   const [flightDate, setFlightDate] = useState("");
+  const [isCancelled, setIsCancelled] = useState(false);
+  const [arrDelayMinutes, setArrDelayMinutes] = useState("");
   const [extraordinaryCircumstances, setExtraordinaryCircumstances] =
     useState(false);
   const [expenses, setExpenses] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<EligibilityResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const isPastDate = Boolean(flightDate && flightDate < today);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -29,6 +33,12 @@ export default function FlightCompensationForm() {
         body: JSON.stringify({
           flightIata: flightNumber.trim().toUpperCase(),
           flightDate,
+          isCancelled,
+          arrDelayMinutes: isCancelled
+            ? 0
+            : arrDelayMinutes
+              ? parseInt(arrDelayMinutes, 10)
+              : undefined,
           extraordinaryCircumstances,
           expenses: parseFloat(expenses) || 0,
         }),
@@ -68,7 +78,7 @@ export default function FlightCompensationForm() {
                 id="flightNumber"
                 type="text"
                 required
-                placeholder="e.g., EK215"
+                placeholder="e.g., EK569"
                 value={flightNumber}
                 onChange={(e) => setFlightNumber(e.target.value)}
                 className="w-full rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
@@ -93,11 +103,69 @@ export default function FlightCompensationForm() {
               />
             </div>
           </div>
-          <p className="text-xs text-slate-500">
-            Enter the date on your ticket or boarding pass — not today&apos;s
-            date unless you flew today. EK569 operates daily, so the date must
-            be exact.
-          </p>
+
+          {isPastDate && (
+            <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+              Past flight selected — enter your delay or cancellation details
+              below. Live flight data is only available for today.
+            </div>
+          )}
+
+          <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+            <label
+              htmlFor="isCancelled"
+              className="text-sm font-medium text-slate-700"
+            >
+              Was the flight cancelled?
+            </label>
+            <button
+              id="isCancelled"
+              type="button"
+              role="switch"
+              aria-checked={isCancelled}
+              onClick={() => {
+                setIsCancelled(!isCancelled);
+                if (!isCancelled) setArrDelayMinutes("");
+              }}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:ring-offset-2 ${
+                isCancelled ? "bg-blue-600" : "bg-slate-300"
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  isCancelled ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+
+          {!isCancelled && (
+            <div>
+              <label
+                htmlFor="arrDelayMinutes"
+                className="mb-1.5 block text-sm font-medium text-slate-700"
+              >
+                Arrival Delay (minutes)
+                {isPastDate && (
+                  <span className="ml-1 text-red-500">*</span>
+                )}
+              </label>
+              <input
+                id="arrDelayMinutes"
+                type="number"
+                min="0"
+                required={isPastDate}
+                placeholder="e.g., 150"
+                value={arrDelayMinutes}
+                onChange={(e) => setArrDelayMinutes(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                How late did the flight arrive? Check your airline app, boarding
+                pass, or airport display.
+              </p>
+            </div>
+          )}
 
           <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
             <label
@@ -267,17 +335,19 @@ export default function FlightCompensationForm() {
             {result.message}
           </p>
 
+          {result.usedManualInput && (
+            <p className="mt-2 text-xs text-slate-500">
+              Eligibility calculated from your entered delay/cancellation details.
+              Route verified via AirLabs routes database.
+            </p>
+          )}
+
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <div className="rounded-lg border border-slate-200 bg-white/60 p-4">
               <h3 className="text-sm font-semibold text-slate-800">Flight</h3>
               <p className="mt-1 text-sm text-slate-600">
-                {flightNumber.toUpperCase()} — departed {result.depTime}
+                {flightNumber.toUpperCase()} on {result.flightDate}
               </p>
-              {result.flightDate && result.depTime && (
-                <p className="mt-1 text-xs text-slate-500">
-                  Confirmed date: {result.flightDate}
-                </p>
-              )}
               {result.route && (
                 <p className="mt-1 text-sm text-slate-500">{result.route}</p>
               )}
@@ -288,15 +358,15 @@ export default function FlightCompensationForm() {
               <p className="mt-1 text-sm capitalize text-slate-600">
                 {result.status?.replace("-", " ") ?? "Unknown"}
               </p>
-              {result.depTime && (
-                <p className="mt-1 text-sm text-slate-500">
-                  Departs {result.depTime}
+              {result.dataSource && (
+                <p className="mt-1 text-xs text-slate-500">
+                  Data: {result.dataSource}
                 </p>
               )}
             </div>
           </div>
 
-          {result.delayDuration !== null && (
+          {result.delayDuration !== null && result.status !== "cancelled" && (
             <div className="mt-4 rounded-lg border border-slate-200 bg-white/60 p-4">
               <h3 className="text-sm font-semibold text-slate-800">
                 Arrival Delay
@@ -345,8 +415,8 @@ export default function FlightCompensationForm() {
             />
           </svg>
           <p className="mt-3 text-sm text-slate-500">
-            Enter your flight number and date to check eligibility under UAE
-            GCAA regulations.
+            Enter your flight details and delay information to check eligibility
+            under UAE GCAA regulations.
           </p>
         </div>
       )}

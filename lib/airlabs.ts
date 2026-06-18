@@ -15,12 +15,9 @@ interface ScheduleRecord {
   status?: string;
 }
 
-interface HistoricalRecord extends ScheduleRecord {}
-
 interface AirLabsListResponse<T> {
   response?: T[];
   error?: { message?: string; code?: string };
-  request?: { has_more?: boolean };
 }
 
 interface LiveFlightResponse {
@@ -28,11 +25,14 @@ interface LiveFlightResponse {
   error?: { message?: string; code?: string };
 }
 
+interface RouteRecord {
+  dep_iata?: string;
+  arr_iata?: string;
+}
+
 export interface FlightLookupResult {
   flight: FlightData | null;
-  errorCode?: "not_found" | "historical_unavailable" | "date_mismatch";
   message?: string;
-  returnedDate?: string;
 }
 
 function matchesFlightDate(
@@ -92,58 +92,11 @@ function mapRecord(
   };
 }
 
-function findMatchingRecord<T extends ScheduleRecord>(
-  records: T[],
+function findMatchingRecord(
+  records: ScheduleRecord[],
   flightDate: string
-): T | undefined {
+): ScheduleRecord | undefined {
   return records.find((record) => matchesFlightDate(record.dep_time, flightDate));
-}
-
-async function fetchHistoricalFlight(
-  flightIata: string,
-  flightDate: string,
-  apiKey: string
-): Promise<{ flight: FlightData | null; unavailable: boolean }> {
-  let offset = 0;
-  const maxPages = 20;
-
-  for (let page = 0; page < maxPages; page++) {
-    const params = new URLSearchParams({
-      api_key: apiKey,
-      flight_iata: flightIata,
-      offset: String(offset),
-    });
-
-    const response = await fetch(
-      `https://airlabs.co/api/v10/historical?${params.toString()}`,
-      { next: { revalidate: 0 } }
-    );
-
-    const data: AirLabsListResponse<HistoricalRecord> = await response.json();
-
-    if (data.error) {
-      const code = data.error.code ?? "";
-      const unavailable =
-        code === "unknown_method" ||
-        code === "method_not_allowed" ||
-        data.error.message?.toLowerCase().includes("historical") === true;
-      return { flight: null, unavailable };
-    }
-
-    if (!response.ok || !data.response?.length) {
-      return { flight: null, unavailable: false };
-    }
-
-    const match = findMatchingRecord(data.response, flightDate);
-    if (match) {
-      return { flight: mapRecord(match, "historical"), unavailable: false };
-    }
-
-    if (!data.request?.has_more) break;
-    offset += data.response.length;
-  }
-
-  return { flight: null, unavailable: false };
 }
 
 async function fetchSchedulesFlight(
@@ -204,95 +157,73 @@ async function fetchLiveFlight(
   );
 }
 
+export async function fetchRouteAirports(
+  flightIata: string,
+  apiKey: string
+): Promise<{ dep_iata?: string; arr_iata?: string } | null> {
+  const params = new URLSearchParams({
+    api_key: apiKey,
+    flight_iata: flightIata,
+    _fields: "dep_iata,arr_iata",
+    limit: "1",
+  });
+
+  const response = await fetch(
+    `https://airlabs.co/api/v9/routes?${params.toString()}`,
+    { next: { revalidate: 0 } }
+  );
+
+  if (!response.ok) return null;
+
+  const data: AirLabsListResponse<RouteRecord> = await response.json();
+  if (data.error || !data.response?.length) return null;
+
+  return data.response[0];
+}
+
+export async function fetchTodayFlight(
+  flightIata: string,
+  flightDate: string,
+  apiKey: string
+): Promise<FlightData | null> {
+  const schedulesFlight = await fetchSchedulesFlight(
+    flightIata,
+    flightDate,
+    apiKey
+  );
+  if (schedulesFlight) return schedulesFlight;
+
+  return fetchLiveFlight(flightIata, flightDate, apiKey);
+}
+
 export function isValidFlightDate(date: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(date);
 }
 
-export function touchesUaeAirport(flight: FlightData): boolean {
+export function touchesUaeAirport(flight: {
+  dep_iata?: string;
+  arr_iata?: string;
+}): boolean {
   return (
     (flight.dep_iata != null && UAE_AIRPORTS.includes(flight.dep_iata)) ||
     (flight.arr_iata != null && UAE_AIRPORTS.includes(flight.arr_iata))
   );
 }
 
-export function assertFlightMatchesDate(
-  flight: FlightData,
-  flightDate: string
-): FlightLookupResult | null {
-  const returnedDate = extractDepartureDate(flight.dep_time);
-
-  if (!returnedDate || returnedDate !== flightDate) {
-    return {
-      flight: null,
-      errorCode: "date_mismatch",
-      returnedDate: returnedDate ?? undefined,
-      message: returnedDate
-        ? `AirLabs returned ${flight.dep_iata ?? "?"} → ${flight.arr_iata ?? "?"} departing on ${returnedDate}, not ${flightDate}. EK569 flies daily — make sure you entered the exact date shown on your ticket.`
-        : `Could not confirm the departure date for this flight. Please check the date on your boarding pass.`,
-    };
-  }
-
-  return null;
-}
-
-export async function fetchFlightByNumberAndDate(
-  flightIata: string,
-  flightDate: string,
-  apiKey: string
-): Promise<FlightLookupResult> {
-  const today = getTodayInUae();
-  const isToday = flightDate === today;
-
-  const { flight: historicalFlight, unavailable: historicalUnavailable } =
-    await fetchHistoricalFlight(flightIata, flightDate, apiKey);
-
-  if (historicalFlight) {
-    const mismatch = assertFlightMatchesDate(historicalFlight, flightDate);
-    if (mismatch) return mismatch;
-    return { flight: historicalFlight };
-  }
-
-  if (!isToday && historicalUnavailable) {
-    return {
-      flight: null,
-      errorCode: "historical_unavailable",
-      message:
-        "Past flight lookup requires the AirLabs Historical API (v10) on your account. Your current API key does not have access. Contact AirLabs to enable it, or check a flight from today only.",
-    };
-  }
-
-  const schedulesFlight = await fetchSchedulesFlight(
-    flightIata,
-    flightDate,
-    apiKey
-  );
-  if (schedulesFlight) {
-    const mismatch = assertFlightMatchesDate(schedulesFlight, flightDate);
-    if (mismatch) return mismatch;
-    return { flight: schedulesFlight };
-  }
-
-  if (isToday) {
-    const liveFlight = await fetchLiveFlight(flightIata, flightDate, apiKey);
-    if (liveFlight) {
-      const mismatch = assertFlightMatchesDate(liveFlight, flightDate);
-      if (mismatch) return mismatch;
-      return { flight: liveFlight };
-    }
-  }
-
-  if (!isToday) {
-    return {
-      flight: null,
-      errorCode: "not_found",
-      message: `No record found for ${flightIata} on ${flightDate}. Past flights are searched via the AirLabs Historical API — verify the date on your ticket (not today's date).`,
-    };
-  }
-
+export function buildManualFlightData(input: {
+  flightDate: string;
+  isCancelled: boolean;
+  arrDelayMinutes: number;
+  depIata?: string;
+  arrIata?: string;
+}): FlightData {
   return {
-    flight: null,
-    errorCode: "not_found",
-    message: `No record found for ${flightIata} on ${flightDate}. The flight may not have departed yet, or data is not yet available.`,
+    status: input.isCancelled ? "cancelled" : "landed",
+    arr_delayed: input.isCancelled ? 0 : input.arrDelayMinutes,
+    dep_iata: input.depIata,
+    arr_iata: input.arrIata,
+    dep_time: `${input.flightDate} 00:00`,
+    source: "manual",
   };
 }
 

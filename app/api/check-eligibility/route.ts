@@ -1,25 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  extractDepartureDate,
-  fetchFlightByNumberAndDate,
+  buildManualFlightData,
+  fetchRouteAirports,
+  fetchTodayFlight,
   getTodayInUae,
   isValidFlightDate,
   touchesUaeAirport,
 } from "@/lib/airlabs";
 import { evaluateEligibility, notUaeEligibleResult } from "@/lib/gcaa";
+import type { FlightData } from "@/types/flight";
 
 interface RequestBody {
   flightIata: string;
   flightDate: string;
   extraordinaryCircumstances: boolean;
   expenses: number;
+  isCancelled?: boolean;
+  arrDelayMinutes?: number;
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body: RequestBody = await request.json();
-    const { flightIata, flightDate, extraordinaryCircumstances, expenses } =
-      body;
+    const {
+      flightIata,
+      flightDate,
+      extraordinaryCircumstances,
+      expenses,
+      isCancelled = false,
+      arrDelayMinutes,
+    } = body;
 
     if (!flightIata || typeof flightIata !== "string") {
       return NextResponse.json(
@@ -55,47 +65,62 @@ export async function POST(request: NextRequest) {
     }
 
     const normalizedFlight = flightIata.trim().toUpperCase();
-    let lookup;
+    const isToday = flightDate === today;
+    let flight: FlightData | null = null;
+    let usedManualInput = false;
 
-    try {
-      lookup = await fetchFlightByNumberAndDate(
-        normalizedFlight,
+    if (isToday) {
+      try {
+        flight = await fetchTodayFlight(normalizedFlight, flightDate, apiKey);
+      } catch {
+        return NextResponse.json(
+          { message: "Unable to reach the flight data service. Please try again." },
+          { status: 502 }
+        );
+      }
+    }
+
+    if (!flight) {
+      if (
+        !isCancelled &&
+        (arrDelayMinutes === undefined || arrDelayMinutes === null)
+      ) {
+        return NextResponse.json(
+          {
+            message: isToday
+              ? "Could not fetch live flight data. Please enter your arrival delay in minutes, or mark the flight as cancelled."
+              : "For past flights, enter your arrival delay in minutes or mark the flight as cancelled. Automatic lookup is only available for today's flights.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const delay = isCancelled ? 0 : Math.max(0, Number(arrDelayMinutes) || 0);
+      const route = await fetchRouteAirports(normalizedFlight, apiKey);
+
+      flight = buildManualFlightData({
         flightDate,
-        apiKey
-      );
-    } catch {
-      return NextResponse.json(
-        { message: "Unable to reach the flight data service. Please try again." },
-        { status: 502 }
-      );
+        isCancelled,
+        arrDelayMinutes: delay,
+        depIata: route?.dep_iata,
+        arrIata: route?.arr_iata,
+      });
+      usedManualInput = true;
     }
-
-    if (!lookup.flight) {
-      return NextResponse.json(
-        {
-          message:
-            lookup.message ??
-            `No flight found for ${normalizedFlight} on ${flightDate}.`,
-        },
-        { status: lookup.errorCode === "historical_unavailable" ? 503 : 404 }
-      );
-    }
-
-    const flight = lookup.flight;
-    const resolvedDate = extractDepartureDate(flight.dep_time) ?? flightDate;
 
     if (!touchesUaeAirport(flight)) {
       return NextResponse.json(
-        notUaeEligibleResult(flight, resolvedDate)
+        notUaeEligibleResult(flight, flightDate, usedManualInput)
       );
     }
 
     return NextResponse.json(
       evaluateEligibility(
         flight,
-        resolvedDate,
+        flightDate,
         extraordinaryCircumstances,
-        expenses ?? 0
+        expenses ?? 0,
+        usedManualInput
       )
     );
   } catch {

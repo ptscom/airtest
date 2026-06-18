@@ -6,10 +6,5 @@ export interface FlightData {
   dep_time?: string;
   arr_time?: string;
   arr_actual?: string;
-  source: "historical" | "schedules" | "live";
-}
-
-export interface AirLabsError {
-  message?: string;
-  code?: string;
+  source: "schedules" | "live" | "manual";
 }

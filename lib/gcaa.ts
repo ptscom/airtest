@@ -1,6 +1,6 @@
 import type { FlightData } from "@/types/flight";
 import type { EligibilityResult } from "@/types/eligibility";
-import { extractDepartureDate, formatRoute } from "@/lib/airlabs";
+import { formatRoute } from "@/lib/airlabs";
 
 function getDutyOfCare(delayMinutes: number): {
   eligible: boolean;
@@ -51,7 +51,8 @@ export function evaluateEligibility(
   flight: FlightData,
   flightDate: string,
   extraordinaryCircumstances: boolean,
-  expenses: number
+  expenses: number,
+  usedManualInput: boolean
 ): EligibilityResult {
   const { status, arr_delayed } = flight;
   let eligible = false;
@@ -79,6 +80,10 @@ export function evaluateEligibility(
     }
   }
 
+  if (usedManualInput) {
+    message = `${message} (Based on the delay/cancellation details you provided.)`;
+  }
+
   const financialNote = getFinancialNote(
     extraordinaryCircumstances,
     expenses,
@@ -95,30 +100,33 @@ export function evaluateEligibility(
     delayDuration: arr_delayed,
     dutyOfCare,
     financialNote,
-    flightDate: extractDepartureDate(flight.dep_time) ?? flightDate,
+    flightDate,
     depTime: flight.dep_time ?? null,
     arrTime: flight.arr_actual ?? flight.arr_time ?? null,
     route: formatRoute(flight),
     status: flight.status ?? null,
     dataSource: flight.source,
+    usedManualInput,
   };
 }
 
 export function notUaeEligibleResult(
   flight: FlightData,
-  flightDate: string
+  flightDate: string,
+  usedManualInput: boolean
 ): EligibilityResult {
   return {
     eligible: false,
-    message: "Flight must touch a UAE airport.",
+    message: "Flight must touch a UAE airport (DXB, AUH, SHJ, DWC, RKT, or AAN).",
     delayDuration: flight.arr_delayed,
     dutyOfCare: null,
     financialNote: null,
-    flightDate: extractDepartureDate(flight.dep_time) ?? flightDate,
+    flightDate,
     depTime: flight.dep_time ?? null,
     arrTime: flight.arr_actual ?? flight.arr_time ?? null,
     route: formatRoute(flight),
     status: flight.status ?? null,
     dataSource: flight.source,
+    usedManualInput,
   };
 }
