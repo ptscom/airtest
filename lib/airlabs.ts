@@ -18,6 +18,7 @@ interface ScheduleRecord {
 interface AirLabsListResponse<T> {
   response?: T[];
   error?: { message?: string; code?: string };
+  request?: { has_more?: boolean };
 }
 
 interface LiveFlightResponse {
@@ -97,6 +98,41 @@ function findMatchingRecord(
   flightDate: string
 ): ScheduleRecord | undefined {
   return records.find((record) => matchesFlightDate(record.dep_time, flightDate));
+}
+
+async function fetchHistoricalFlight(
+  flightIata: string,
+  flightDate: string,
+  apiKey: string
+): Promise<FlightData | null> {
+  let offset = 0;
+  const maxPages = 20;
+
+  for (let page = 0; page < maxPages; page++) {
+    const params = new URLSearchParams({
+      api_key: apiKey,
+      flight_iata: flightIata,
+      offset: String(offset),
+    });
+
+    const response = await fetch(
+      `https://airlabs.co/api/v10/historical?${params.toString()}`,
+      { next: { revalidate: 0 } }
+    );
+
+    if (!response.ok) return null;
+
+    const data: AirLabsListResponse<ScheduleRecord> = await response.json();
+    if (data.error || !data.response?.length) return null;
+
+    const match = findMatchingRecord(data.response, flightDate);
+    if (match) return mapRecord(match, "historical");
+
+    if (!data.request?.has_more) break;
+    offset += data.response.length;
+  }
+
+  return null;
 }
 
 async function fetchSchedulesFlight(
@@ -194,6 +230,26 @@ export async function fetchTodayFlight(
   if (schedulesFlight) return schedulesFlight;
 
   return fetchLiveFlight(flightIata, flightDate, apiKey);
+}
+
+export async function resolveFlightData(
+  flightIata: string,
+  flightDate: string,
+  apiKey: string
+): Promise<FlightData | null> {
+  const historical = await fetchHistoricalFlight(
+    flightIata,
+    flightDate,
+    apiKey
+  );
+  if (historical) return historical;
+
+  const today = getTodayInUae();
+  if (flightDate === today) {
+    return fetchTodayFlight(flightIata, flightDate, apiKey);
+  }
+
+  return null;
 }
 
 export function isValidFlightDate(date: string): boolean {

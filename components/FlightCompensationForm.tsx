@@ -18,8 +18,6 @@ export default function FlightCompensationForm() {
   const [result, setResult] = useState<EligibilityResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const isPastDate = Boolean(flightDate && flightDate < today);
-
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
@@ -104,12 +102,20 @@ export default function FlightCompensationForm() {
             </div>
           </div>
 
-          {isPastDate && (
-            <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-              Past flight selected — enter your delay or cancellation details
-              below. Live flight data is only available for today.
-            </div>
-          )}
+          <p className="text-xs text-slate-500">
+            Enter the date on your boarding pass. Past flights are looked up via
+            the AirLabs Historical API and matched by scheduled departure date.
+          </p>
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+            <p className="text-sm font-medium text-slate-700">
+              Optional — only if automatic lookup fails
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Leave blank to fetch delay and status from AirLabs. Fill in only
+              if no record is found for your date.
+            </p>
+          </div>
 
           <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
             <label
@@ -146,16 +152,12 @@ export default function FlightCompensationForm() {
                 className="mb-1.5 block text-sm font-medium text-slate-700"
               >
                 Arrival Delay (minutes)
-                {isPastDate && (
-                  <span className="ml-1 text-red-500">*</span>
-                )}
               </label>
               <input
                 id="arrDelayMinutes"
                 type="number"
                 min="0"
-                required={isPastDate}
-                placeholder="e.g., 150"
+                placeholder="e.g., 150 — optional"
                 value={arrDelayMinutes}
                 onChange={(e) => setArrDelayMinutes(e.target.value)}
                 className="w-full rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
@@ -335,6 +337,12 @@ export default function FlightCompensationForm() {
             {result.message}
           </p>
 
+          {result.dataSource === "historical" && (
+            <p className="mt-2 text-xs text-slate-500">
+              Delay and status fetched from AirLabs Historical API for your
+              selected date.
+            </p>
+          )}
           {result.usedManualInput && (
             <p className="mt-2 text-xs text-slate-500">
               Eligibility calculated from your entered delay/cancellation details.

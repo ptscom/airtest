@@ -9,6 +9,6 @@ export interface EligibilityResult {
   arrTime: string | null;
   route: string | null;
   status: string | null;
-  dataSource: "schedules" | "live" | "manual" | null;
+  dataSource: "historical" | "schedules" | "live" | "manual" | null;
   usedManualInput: boolean;
 }

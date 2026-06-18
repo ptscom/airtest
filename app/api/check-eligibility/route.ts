@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   buildManualFlightData,
   fetchRouteAirports,
-  fetchTodayFlight,
   getTodayInUae,
   isValidFlightDate,
+  resolveFlightData,
   touchesUaeAirport,
 } from "@/lib/airlabs";
 import { evaluateEligibility, notUaeEligibleResult } from "@/lib/gcaa";
@@ -65,33 +65,33 @@ export async function POST(request: NextRequest) {
     }
 
     const normalizedFlight = flightIata.trim().toUpperCase();
-    const isToday = flightDate === today;
     let flight: FlightData | null = null;
     let usedManualInput = false;
 
-    if (isToday) {
-      try {
-        flight = await fetchTodayFlight(normalizedFlight, flightDate, apiKey);
-      } catch {
-        return NextResponse.json(
-          { message: "Unable to reach the flight data service. Please try again." },
-          { status: 502 }
-        );
-      }
+    try {
+      flight = await resolveFlightData(
+        normalizedFlight,
+        flightDate,
+        apiKey
+      );
+    } catch {
+      return NextResponse.json(
+        { message: "Unable to reach the flight data service. Please try again." },
+        { status: 502 }
+      );
     }
 
     if (!flight) {
-      if (
-        !isCancelled &&
-        (arrDelayMinutes === undefined || arrDelayMinutes === null)
-      ) {
+      const hasManualInput =
+        isCancelled ||
+        (arrDelayMinutes !== undefined && arrDelayMinutes !== null);
+
+      if (!hasManualInput) {
         return NextResponse.json(
           {
-            message: isToday
-              ? "Could not fetch live flight data. Please enter your arrival delay in minutes, or mark the flight as cancelled."
-              : "For past flights, enter your arrival delay in minutes or mark the flight as cancelled. Automatic lookup is only available for today's flights.",
+            message: `No flight record found for ${normalizedFlight} on ${flightDate}. Check the date on your ticket (flights like EK569 operate daily). You can also enter your delay or mark the flight as cancelled below and try again.`,
           },
-          { status: 400 }
+          { status: 404 }
         );
       }
 
