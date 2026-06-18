@@ -4,5 +4,6 @@ export interface EligibilityResult {
   delayDuration: number | null;
   dutyOfCare: string | null;
   financialNote: string | null;
-  flightDate?: string;
+  flightDate?: string | null;
+  depTime?: string | null;
 }

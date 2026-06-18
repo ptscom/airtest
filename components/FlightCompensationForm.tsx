@@ -81,14 +81,14 @@ export default function FlightCompensationForm() {
             <input
               id="flightDate"
               type="date"
-              required
               max={new Date().toISOString().slice(0, 10)}
               value={flightDate}
               onChange={(e) => setFlightDate(e.target.value)}
               className="w-full rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
             />
             <p className="mt-1 text-xs text-slate-500">
-              The date your flight was scheduled to depart.
+              Optional. Used to verify the flight returned by AirLabs matches
+              your travel date (from <code className="text-slate-600">dep_time</code>).
             </p>
           </div>
 
@@ -260,13 +260,18 @@ export default function FlightCompensationForm() {
             {result.message}
           </p>
 
-          {result.flightDate && (
+          {(result.flightDate || result.depTime) && (
             <div className="mt-4 rounded-lg border border-slate-200 bg-white/60 p-4">
               <h3 className="text-sm font-semibold text-slate-800">
                 Flight Checked
               </h3>
               <p className="mt-1 text-sm text-slate-600">
-                {flightNumber.toUpperCase()} on {result.flightDate}
+                {flightNumber.toUpperCase()}
+                {result.depTime
+                  ? ` — scheduled departure ${result.depTime}`
+                  : result.flightDate
+                    ? ` on ${result.flightDate}`
+                    : ""}
               </p>
             </div>
           )}

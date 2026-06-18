@@ -4,37 +4,21 @@ const UAE_AIRPORTS = ["DXB", "AUH", "SHJ", "DWC", "RKT", "AAN"];
 
 interface RequestBody {
   flightIata: string;
-  flightDate: string;
+  flightDate?: string;
   extraordinaryCircumstances: boolean;
   expenses: number;
 }
 
-interface FlightData {
+interface AirLabsFlight {
   status?: string;
-  arr_delayed: number;
-  dep_iata?: string;
-  arr_iata?: string;
-  dep_time?: string;
-}
-
-interface AirLabsFlightResponse {
-  response?: FlightData;
-  error?: { message?: string };
-}
-
-interface HistoricalFlight {
-  dep_iata?: string;
-  arr_iata?: string;
-  dep_time?: string;
-  arr_time?: string;
-  arr_actual?: string;
-  dep_delayed?: number;
   arr_delayed?: number | null;
-  status?: string;
+  dep_iata?: string;
+  arr_iata?: string;
+  dep_time?: string;
 }
 
-interface HistoricalResponse {
-  response?: HistoricalFlight[];
+interface AirLabsResponse {
+  response?: AirLabsFlight;
   error?: { message?: string };
 }
 
@@ -87,115 +71,9 @@ function isValidDateFormat(date: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(date);
 }
 
-function matchesFlightDate(depTime: string | undefined, flightDate: string): boolean {
-  if (!depTime) return false;
-  return depTime.startsWith(flightDate);
-}
-
-function calculateArrDelay(
-  arrTime: string | undefined,
-  arrActual: string | undefined,
-  reportedDelay: number | null | undefined
-): number {
-  if (reportedDelay != null && reportedDelay >= 0) {
-    return reportedDelay;
-  }
-  if (!arrTime || !arrActual) return 0;
-
-  const scheduled = new Date(arrTime.replace(" ", "T"));
-  const actual = new Date(arrActual.replace(" ", "T"));
-  const delayMs = actual.getTime() - scheduled.getTime();
-
-  return delayMs > 0 ? Math.round(delayMs / 60000) : 0;
-}
-
-async function fetchHistoricalFlight(
-  flightIata: string,
-  flightDate: string,
-  apiKey: string
-): Promise<FlightData | null> {
-  const params = new URLSearchParams({
-    api_key: apiKey,
-    flight_iata: flightIata,
-  });
-
-  const response = await fetch(
-    `https://airlabs.co/api/v10/historical?${params.toString()}`,
-    { next: { revalidate: 0 } }
-  );
-
-  if (!response.ok) return null;
-
-  const data: HistoricalResponse = await response.json();
-  if (data.error || !data.response?.length) return null;
-
-  const match = data.response.find((flight) =>
-    matchesFlightDate(flight.dep_time, flightDate)
-  );
-
-  if (!match) return null;
-
-  return {
-    status: match.status,
-    arr_delayed: calculateArrDelay(
-      match.arr_time,
-      match.arr_actual,
-      match.arr_delayed
-    ),
-    dep_iata: match.dep_iata,
-    arr_iata: match.arr_iata,
-    dep_time: match.dep_time,
-  };
-}
-
-async function fetchLiveFlight(
-  flightIata: string,
-  flightDate: string,
-  apiKey: string
-): Promise<FlightData | null> {
-  const params = new URLSearchParams({
-    api_key: apiKey,
-    flight_iata: flightIata,
-    _fields: "status,arr_delayed,dep_iata,arr_iata,dep_time",
-  });
-
-  const response = await fetch(
-    `https://airlabs.co/api/v9/flight?${params.toString()}`,
-    { next: { revalidate: 0 } }
-  );
-
-  if (!response.ok) return null;
-
-  const data: AirLabsFlightResponse = await response.json();
-  if (data.error || !data.response) return null;
-
-  if (!matchesFlightDate(data.response.dep_time, flightDate)) return null;
-
-  return {
-    ...data.response,
-    arr_delayed: data.response.arr_delayed ?? 0,
-  };
-}
-
-async function fetchFlightForDate(
-  flightIata: string,
-  flightDate: string,
-  apiKey: string
-): Promise<FlightData | null> {
-  const today = new Date().toISOString().slice(0, 10);
-  const isTodayOrPast = flightDate <= today;
-
-  if (isTodayOrPast) {
-    const historical = await fetchHistoricalFlight(flightIata, flightDate, apiKey);
-    if (historical) return historical;
-  }
-
-  if (flightDate === today) {
-    const live = await fetchLiveFlight(flightIata, flightDate, apiKey);
-    if (live) return live;
-  }
-
-  return null;
+function extractDateFromDepTime(depTime: string | undefined): string | null {
+  if (!depTime) return null;
+  return depTime.slice(0, 10);
 }
 
 export async function POST(request: NextRequest) {
@@ -210,17 +88,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!flightDate || !isValidDateFormat(flightDate)) {
+    if (flightDate && !isValidDateFormat(flightDate)) {
       return NextResponse.json(
-        { message: "A valid flight date is required (YYYY-MM-DD)." },
-        { status: 400 }
-      );
-    }
-
-    const today = new Date().toISOString().slice(0, 10);
-    if (flightDate > today) {
-      return NextResponse.json(
-        { message: "Flight date cannot be in the future." },
+        { message: "Flight date must be in YYYY-MM-DD format." },
         { status: 400 }
       );
     }
@@ -236,11 +106,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const normalizedFlight = flightIata.trim().toUpperCase();
-    let flight: FlightData | null;
+    const params = new URLSearchParams({
+      api_key: apiKey,
+      flight_iata: flightIata.trim().toUpperCase(),
+      _fields: "status,arr_delayed,dep_iata,arr_iata,dep_time",
+    });
+
+    let airLabsData: AirLabsResponse;
 
     try {
-      flight = await fetchFlightForDate(normalizedFlight, flightDate, apiKey);
+      const airLabsResponse = await fetch(
+        `https://airlabs.co/api/v9/flight?${params.toString()}`,
+        { next: { revalidate: 0 } }
+      );
+
+      if (!airLabsResponse.ok) {
+        return NextResponse.json(
+          {
+            message: `Flight data service returned an error (${airLabsResponse.status}).`,
+          },
+          { status: 502 }
+        );
+      }
+
+      airLabsData = await airLabsResponse.json();
     } catch {
       return NextResponse.json(
         { message: "Unable to reach the flight data service. Please try again." },
@@ -248,16 +137,39 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!flight) {
+    if (airLabsData.error) {
       return NextResponse.json(
         {
-          message: `No flight data found for ${normalizedFlight} on ${flightDate}. Please verify the flight number and date.`,
+          message:
+            airLabsData.error.message ||
+            "Flight not found. Please check the flight number and try again.",
         },
         { status: 404 }
       );
     }
 
-    const { status, arr_delayed = 0, dep_iata, arr_iata } = flight;
+    const flight = airLabsData.response;
+    if (!flight) {
+      return NextResponse.json(
+        { message: "No flight data returned. Please verify the flight number." },
+        { status: 404 }
+      );
+    }
+
+    const returnedDate = extractDateFromDepTime(flight.dep_time);
+
+    if (flightDate && returnedDate && returnedDate !== flightDate) {
+      return NextResponse.json(
+        {
+          message: `AirLabs returned ${flightIata.trim().toUpperCase()} departing on ${returnedDate}, which does not match your entered date (${flightDate}). The /flight API returns one flight and cannot search by date — try a flight that is currently active or adjust the date.`,
+        },
+        { status: 404 }
+      );
+    }
+
+    const { status, dep_iata, arr_iata } = flight;
+    const arr_delayed = flight.arr_delayed ?? 0;
+    const resolvedFlightDate = flightDate ?? returnedDate ?? null;
 
     const touchesUae =
       (dep_iata && UAE_AIRPORTS.includes(dep_iata)) ||
@@ -267,10 +179,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         eligible: false,
         message: "Flight must touch a UAE airport.",
-        delayDuration: arr_delayed ?? null,
+        delayDuration: arr_delayed,
         dutyOfCare: null,
         financialNote: null,
-        flightDate,
+        flightDate: resolvedFlightDate,
+        depTime: flight.dep_time ?? null,
       });
     }
 
@@ -278,7 +191,7 @@ export async function POST(request: NextRequest) {
     let message = "";
     let dutyOfCare: string | null = null;
     let dutyOfCareEligible = false;
-    const delayDuration = arr_delayed ?? null;
+    const delayDuration = arr_delayed;
 
     if (status === "cancelled") {
       eligible = true;
@@ -316,7 +229,8 @@ export async function POST(request: NextRequest) {
       delayDuration,
       dutyOfCare,
       financialNote,
-      flightDate,
+      flightDate: resolvedFlightDate,
+      depTime: flight.dep_time ?? null,
     });
   } catch {
     return NextResponse.json(
