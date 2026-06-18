@@ -103,8 +103,9 @@ export default function FlightCompensationForm() {
           </div>
 
           <p className="text-xs text-slate-500">
-            Enter the date on your boarding pass. Past flights are looked up via
-            the AirLabs Historical API and matched by scheduled departure date.
+            Use the date on your boarding pass. For international flights, also
+            try the UTC date if the local departure date does not match (e.g.
+            EK569 BLR→DXB departs June 18 local / June 17 UTC).
           </p>
 
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">

@@ -2,14 +2,19 @@ import type { FlightData } from "@/types/flight";
 
 const UAE_AIRPORTS = ["DXB", "AUH", "SHJ", "DWC", "RKT", "AAN"];
 const UAE_TIMEZONE = "Asia/Dubai";
+const RECENT_FLIGHT_DAYS = 3;
 
 interface ScheduleRecord {
   dep_iata?: string;
   arr_iata?: string;
   dep_time?: string;
+  dep_actual?: string;
+  dep_time_utc?: string;
+  dep_actual_utc?: string;
   arr_time?: string;
   arr_actual?: string;
   arr_estimated?: string;
+  arr_estimated_utc?: string;
   dep_delayed?: number;
   arr_delayed?: number | null;
   status?: string;
@@ -18,7 +23,7 @@ interface ScheduleRecord {
 interface AirLabsListResponse<T> {
   response?: T[];
   error?: { message?: string; code?: string };
-  request?: { has_more?: boolean };
+  request?: { has_more?: boolean; total_items?: number };
 }
 
 interface LiveFlightResponse {
@@ -34,26 +39,51 @@ interface RouteRecord {
 export interface FlightLookupResult {
   flight: FlightData | null;
   message?: string;
+  sampleDates?: string[];
 }
 
-function matchesFlightDate(
-  depTime: string | undefined,
+function extractDateFromDateTime(dateTime: string | undefined): string | null {
+  if (!dateTime) return null;
+  return dateTime.slice(0, 10);
+}
+
+export function recordMatchesDate(
+  record: ScheduleRecord,
   flightDate: string
 ): boolean {
-  return Boolean(depTime?.startsWith(flightDate));
+  const candidateDates = [
+    record.dep_time,
+    record.dep_actual,
+    record.dep_time_utc,
+    record.dep_actual_utc,
+  ]
+    .map(extractDateFromDateTime)
+    .filter((value): value is string => Boolean(value));
+
+  return candidateDates.includes(flightDate);
 }
 
 export function extractDepartureDate(
   depTime: string | undefined
 ): string | null {
-  if (!depTime) return null;
-  return depTime.slice(0, 10);
+  return extractDateFromDateTime(depTime);
 }
 
 export function getTodayInUae(): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: UAE_TIMEZONE,
   }).format(new Date());
+}
+
+function daysBetween(earlier: string, later: string): number {
+  const start = new Date(`${earlier}T00:00:00Z`).getTime();
+  const end = new Date(`${later}T00:00:00Z`).getTime();
+  return Math.round((end - start) / 86400000);
+}
+
+function isRecentFlightDate(flightDate: string, today: string): boolean {
+  const diff = daysBetween(flightDate, today);
+  return diff >= 0 && diff <= RECENT_FLIGHT_DAYS;
 }
 
 function calculateArrDelay(
@@ -81,14 +111,14 @@ function mapRecord(
     status: record.status ?? "landed",
     arr_delayed: calculateArrDelay(
       record.arr_time,
-      record.arr_actual,
+      record.arr_actual ?? record.arr_estimated,
       record.arr_delayed
     ),
     dep_iata: record.dep_iata,
     arr_iata: record.arr_iata,
-    dep_time: record.dep_time,
+    dep_time: record.dep_actual ?? record.dep_time,
     arr_time: record.arr_time,
-    arr_actual: record.arr_actual,
+    arr_actual: record.arr_actual ?? record.arr_estimated,
     source,
   };
 }
@@ -97,42 +127,58 @@ function findMatchingRecord(
   records: ScheduleRecord[],
   flightDate: string
 ): ScheduleRecord | undefined {
-  return records.find((record) => matchesFlightDate(record.dep_time, flightDate));
+  return records.find((record) => recordMatchesDate(record, flightDate));
+}
+
+function collectSampleDates(records: ScheduleRecord[]): string[] {
+  const dates = new Set<string>();
+
+  for (const record of records) {
+    for (const field of [
+      record.dep_time,
+      record.dep_actual,
+      record.dep_time_utc,
+      record.dep_actual_utc,
+    ]) {
+      const date = extractDateFromDateTime(field);
+      if (date) dates.add(date);
+    }
+  }
+
+  return Array.from(dates).sort();
 }
 
 async function fetchHistoricalFlight(
   flightIata: string,
   flightDate: string,
   apiKey: string
-): Promise<FlightData | null> {
-  let offset = 0;
-  const maxPages = 20;
+): Promise<{ flight: FlightData | null; sampleDates: string[] }> {
+  const params = new URLSearchParams({
+    api_key: apiKey,
+    flight_iata: flightIata,
+  });
 
-  for (let page = 0; page < maxPages; page++) {
-    const params = new URLSearchParams({
-      api_key: apiKey,
-      flight_iata: flightIata,
-      offset: String(offset),
-    });
+  const response = await fetch(
+    `https://airlabs.co/api/v10/historical?${params.toString()}`,
+    { next: { revalidate: 0 } }
+  );
 
-    const response = await fetch(
-      `https://airlabs.co/api/v10/historical?${params.toString()}`,
-      { next: { revalidate: 0 } }
-    );
-
-    if (!response.ok) return null;
-
-    const data: AirLabsListResponse<ScheduleRecord> = await response.json();
-    if (data.error || !data.response?.length) return null;
-
-    const match = findMatchingRecord(data.response, flightDate);
-    if (match) return mapRecord(match, "historical");
-
-    if (!data.request?.has_more) break;
-    offset += data.response.length;
+  if (!response.ok) {
+    return { flight: null, sampleDates: [] };
   }
 
-  return null;
+  const data: AirLabsListResponse<ScheduleRecord> = await response.json();
+  if (data.error || !data.response?.length) {
+    return { flight: null, sampleDates: [] };
+  }
+
+  const sampleDates = collectSampleDates(data.response);
+  const match = findMatchingRecord(data.response, flightDate);
+
+  return {
+    flight: match ? mapRecord(match, "historical") : null,
+    sampleDates,
+  };
 }
 
 async function fetchSchedulesFlight(
@@ -144,7 +190,7 @@ async function fetchSchedulesFlight(
     api_key: apiKey,
     flight_iata: flightIata,
     _fields:
-      "status,arr_delayed,dep_iata,arr_iata,dep_time,arr_time,arr_actual,dep_delayed",
+      "status,arr_delayed,dep_iata,arr_iata,dep_time,dep_actual,dep_time_utc,dep_actual_utc,arr_time,arr_actual,dep_delayed",
   });
 
   const response = await fetch(
@@ -170,7 +216,7 @@ async function fetchLiveFlight(
     api_key: apiKey,
     flight_iata: flightIata,
     _fields:
-      "status,arr_delayed,dep_iata,arr_iata,dep_time,arr_time,arr_estimated",
+      "status,arr_delayed,dep_iata,arr_iata,dep_time,dep_actual,dep_time_utc,dep_actual_utc,arr_time,arr_actual,arr_estimated",
   });
 
   const response = await fetch(
@@ -182,7 +228,7 @@ async function fetchLiveFlight(
 
   const data: LiveFlightResponse = await response.json();
   if (data.error || !data.response) return null;
-  if (!matchesFlightDate(data.response.dep_time, flightDate)) return null;
+  if (!recordMatchesDate(data.response, flightDate)) return null;
 
   return mapRecord(
     {
@@ -236,20 +282,37 @@ export async function resolveFlightData(
   flightIata: string,
   flightDate: string,
   apiKey: string
-): Promise<FlightData | null> {
-  const historical = await fetchHistoricalFlight(
+): Promise<FlightLookupResult> {
+  const today = getTodayInUae();
+  const { flight: historicalFlight, sampleDates } = await fetchHistoricalFlight(
     flightIata,
     flightDate,
     apiKey
   );
-  if (historical) return historical;
 
-  const today = getTodayInUae();
-  if (flightDate === today) {
-    return fetchTodayFlight(flightIata, flightDate, apiKey);
+  if (historicalFlight) {
+    return { flight: historicalFlight };
   }
 
-  return null;
+  if (isRecentFlightDate(flightDate, today)) {
+    const liveFlight = await fetchLiveFlight(flightIata, flightDate, apiKey);
+    if (liveFlight) return { flight: liveFlight };
+
+    const schedulesFlight = await fetchSchedulesFlight(
+      flightIata,
+      flightDate,
+      apiKey
+    );
+    if (schedulesFlight) return { flight: schedulesFlight };
+  }
+
+  return {
+    flight: null,
+    sampleDates,
+    message: sampleDates.length
+      ? `No match for ${flightDate}. AirLabs historical sample dates: ${sampleDates.join(", ")}. For recent flights, we also check UTC departure dates — EK569 departs BLR locally on the next calendar day.`
+      : undefined,
+  };
 }
 
 export function isValidFlightDate(date: string): boolean {

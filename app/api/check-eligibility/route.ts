@@ -65,11 +65,10 @@ export async function POST(request: NextRequest) {
     }
 
     const normalizedFlight = flightIata.trim().toUpperCase();
-    let flight: FlightData | null = null;
-    let usedManualInput = false;
+    let lookup;
 
     try {
-      flight = await resolveFlightData(
+      lookup = await resolveFlightData(
         normalizedFlight,
         flightDate,
         apiKey
@@ -81,6 +80,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    let flight: FlightData | null = lookup.flight;
+    let usedManualInput = false;
+
     if (!flight) {
       const hasManualInput =
         isCancelled ||
@@ -89,7 +91,9 @@ export async function POST(request: NextRequest) {
       if (!hasManualInput) {
         return NextResponse.json(
           {
-            message: `No flight record found for ${normalizedFlight} on ${flightDate}. Check the date on your ticket (flights like EK569 operate daily). You can also enter your delay or mark the flight as cancelled below and try again.`,
+            message:
+              lookup.message ??
+              `No flight record found for ${normalizedFlight} on ${flightDate}. EK569 departs BLR at 04:45 local time (June 18) but June 17 in UTC — try both dates. You can also enter your delay manually below.`,
           },
           { status: 404 }
         );
