@@ -1,70 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-
-const UAE_AIRPORTS = ["DXB", "AUH", "SHJ", "DWC", "RKT", "AAN"];
+import {
+  fetchFlightByNumberAndDate,
+  isValidFlightDate,
+  touchesUaeAirport,
+} from "@/lib/airlabs";
+import { evaluateEligibility, notUaeEligibleResult } from "@/lib/gcaa";
 
 interface RequestBody {
   flightIata: string;
+  flightDate: string;
   extraordinaryCircumstances: boolean;
   expenses: number;
-}
-
-interface AirLabsFlight {
-  status?: string;
-  arr_delayed?: number;
-  dep_iata?: string;
-  arr_iata?: string;
-}
-
-interface AirLabsResponse {
-  response?: AirLabsFlight;
-  error?: { message?: string };
-}
-
-function getDutyOfCare(delayMinutes: number): {
-  eligible: boolean;
-  text: string;
-} {
-  if (delayMinutes >= 360) {
-    return {
-      eligible: true,
-      text: "Meals, Calls, Hotel Accommodation, and Airport Transfers.",
-    };
-  }
-  if (delayMinutes >= 180) {
-    return {
-      eligible: true,
-      text: "Meals, Refreshments, and access to Communication.",
-    };
-  }
-  if (delayMinutes >= 120) {
-    return {
-      eligible: true,
-      text: "Meals and Refreshments.",
-    };
-  }
-  return {
-    eligible: false,
-    text: "Not eligible for Duty of Care.",
-  };
-}
-
-function getFinancialNote(
-  extraordinaryCircumstances: boolean,
-  expenses: number
-): string | null {
-  if (extraordinaryCircumstances) {
-    return "Financial damages are not owed due to the airline's claim of extraordinary circumstances, but Duty of Care still applies.";
-  }
-  if (expenses > 0) {
-    return "You are entitled to claim reimbursement for provable financial losses.";
-  }
-  return null;
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body: RequestBody = await request.json();
-    const { flightIata, extraordinaryCircumstances, expenses } = body;
+    const { flightIata, flightDate, extraordinaryCircumstances, expenses } =
+      body;
 
     if (!flightIata || typeof flightIata !== "string") {
       return NextResponse.json(
@@ -73,38 +26,41 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!flightDate || !isValidFlightDate(flightDate)) {
+      return NextResponse.json(
+        { message: "A valid flight date is required (YYYY-MM-DD)." },
+        { status: 400 }
+      );
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    if (flightDate > today) {
+      return NextResponse.json(
+        { message: "Flight date cannot be in the future." },
+        { status: 400 }
+      );
+    }
+
     const apiKey = process.env.AIRLABS_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { message: "Flight data service is not configured." },
+        {
+          message:
+            "Flight data service is not configured. Set AIRLABS_API_KEY in Vercel Project Settings → Environment Variables, then redeploy.",
+        },
         { status: 500 }
       );
     }
 
-    const params = new URLSearchParams({
-      api_key: apiKey,
-      flight_iata: flightIata.trim().toUpperCase(),
-      _fields: "status,arr_delayed,dep_iata,arr_iata",
-    });
-
-    let airLabsData: AirLabsResponse;
+    const normalizedFlight = flightIata.trim().toUpperCase();
+    let flight;
 
     try {
-      const airLabsResponse = await fetch(
-        `https://airlabs.co/api/v9/flight?${params.toString()}`,
-        { next: { revalidate: 0 } }
+      flight = await fetchFlightByNumberAndDate(
+        normalizedFlight,
+        flightDate,
+        apiKey
       );
-
-      if (!airLabsResponse.ok) {
-        return NextResponse.json(
-          {
-            message: `Flight data service returned an error (${airLabsResponse.status}).`,
-          },
-          { status: 502 }
-        );
-      }
-
-      airLabsData = await airLabsResponse.json();
     } catch {
       return NextResponse.json(
         { message: "Unable to reach the flight data service. Please try again." },
@@ -112,83 +68,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (airLabsData.error) {
+    if (!flight) {
       return NextResponse.json(
         {
-          message:
-            airLabsData.error.message ||
-            "Flight not found. Please check the flight number and try again.",
+          message: `No flight found for ${normalizedFlight} on ${flightDate}. Check the flight number and date, or try again later if the flight was today.`,
         },
         { status: 404 }
       );
     }
 
-    const flight = airLabsData.response;
-    if (!flight) {
+    if (!touchesUaeAirport(flight)) {
       return NextResponse.json(
-        { message: "No flight data returned. Please verify the flight number." },
-        { status: 404 }
+        notUaeEligibleResult(flight, flightDate)
       );
     }
 
-    const { status, arr_delayed = 0, dep_iata, arr_iata } = flight;
-
-    const touchesUae =
-      (dep_iata && UAE_AIRPORTS.includes(dep_iata)) ||
-      (arr_iata && UAE_AIRPORTS.includes(arr_iata));
-
-    if (!touchesUae) {
-      return NextResponse.json({
-        eligible: false,
-        message: "Flight must touch a UAE airport.",
-        delayDuration: arr_delayed ?? null,
-        dutyOfCare: null,
-        financialNote: null,
-      });
-    }
-
-    let eligible = false;
-    let message = "";
-    let dutyOfCare: string | null = null;
-    const delayDuration = arr_delayed ?? null;
-
-    if (status === "cancelled") {
-      eligible = true;
-      message =
-        "Eligible for Full Ticket Refund OR Free Rebooking, plus Hotel Accommodation if overnight stay is required.";
-      dutyOfCare =
-        "Hotel Accommodation if an overnight stay is required due to cancellation.";
-    } else {
-      const dutyResult = getDutyOfCare(arr_delayed);
-      dutyOfCare = dutyResult.text;
-      eligible = dutyResult.eligible;
-
-      if (dutyResult.eligible) {
-        message = `Eligible for Duty of Care: ${dutyResult.text}`;
-      } else {
-        message = dutyResult.text;
-      }
-    }
-
-    const financialNote = getFinancialNote(
-      extraordinaryCircumstances,
-      expenses ?? 0
+    return NextResponse.json(
+      evaluateEligibility(
+        flight,
+        flightDate,
+        extraordinaryCircumstances,
+        expenses ?? 0
+      )
     );
-
-    if (financialNote) {
-      if (!extraordinaryCircumstances && expenses > 0) {
-        eligible = true;
-      }
-      message = message ? `${message} ${financialNote}` : financialNote;
-    }
-
-    return NextResponse.json({
-      eligible,
-      message,
-      delayDuration,
-      dutyOfCare,
-      financialNote,
-    });
   } catch {
     return NextResponse.json(
       { message: "An unexpected error occurred while processing your request." },
