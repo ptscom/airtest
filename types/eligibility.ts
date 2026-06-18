@@ -9,5 +9,5 @@ export interface EligibilityResult {
   arrTime: string | null;
   route: string | null;
   status: string | null;
-  dataSource: "historical" | "live" | null;
+  dataSource: "historical" | "schedules" | "live" | null;
 }

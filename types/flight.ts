@@ -6,7 +6,7 @@ export interface FlightData {
   dep_time?: string;
   arr_time?: string;
   arr_actual?: string;
-  source: "historical" | "live";
+  source: "historical" | "schedules" | "live";
 }
 
 export interface AirLabsError {

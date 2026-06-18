@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  extractDepartureDate,
   fetchFlightByNumberAndDate,
+  getTodayInUae,
   isValidFlightDate,
   touchesUaeAirport,
 } from "@/lib/airlabs";
@@ -33,7 +35,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getTodayInUae();
     if (flightDate > today) {
       return NextResponse.json(
         { message: "Flight date cannot be in the future." },
@@ -53,10 +55,10 @@ export async function POST(request: NextRequest) {
     }
 
     const normalizedFlight = flightIata.trim().toUpperCase();
-    let flight;
+    let lookup;
 
     try {
-      flight = await fetchFlightByNumberAndDate(
+      lookup = await fetchFlightByNumberAndDate(
         normalizedFlight,
         flightDate,
         apiKey
@@ -68,25 +70,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!flight) {
+    if (!lookup.flight) {
       return NextResponse.json(
         {
-          message: `No flight found for ${normalizedFlight} on ${flightDate}. Check the flight number and date, or try again later if the flight was today.`,
+          message:
+            lookup.message ??
+            `No flight found for ${normalizedFlight} on ${flightDate}.`,
         },
-        { status: 404 }
+        { status: lookup.errorCode === "historical_unavailable" ? 503 : 404 }
       );
     }
 
+    const flight = lookup.flight;
+    const resolvedDate = extractDepartureDate(flight.dep_time) ?? flightDate;
+
     if (!touchesUaeAirport(flight)) {
       return NextResponse.json(
-        notUaeEligibleResult(flight, flightDate)
+        notUaeEligibleResult(flight, resolvedDate)
       );
     }
 
     return NextResponse.json(
       evaluateEligibility(
         flight,
-        flightDate,
+        resolvedDate,
         extraordinaryCircumstances,
         expenses ?? 0
       )

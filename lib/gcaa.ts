@@ -1,6 +1,6 @@
 import type { FlightData } from "@/types/flight";
 import type { EligibilityResult } from "@/types/eligibility";
-import { formatRoute } from "@/lib/airlabs";
+import { extractDepartureDate, formatRoute } from "@/lib/airlabs";
 
 function getDutyOfCare(delayMinutes: number): {
   eligible: boolean;
@@ -95,7 +95,7 @@ export function evaluateEligibility(
     delayDuration: arr_delayed,
     dutyOfCare,
     financialNote,
-    flightDate,
+    flightDate: extractDepartureDate(flight.dep_time) ?? flightDate,
     depTime: flight.dep_time ?? null,
     arrTime: flight.arr_actual ?? flight.arr_time ?? null,
     route: formatRoute(flight),
@@ -114,7 +114,7 @@ export function notUaeEligibleResult(
     delayDuration: flight.arr_delayed,
     dutyOfCare: null,
     financialNote: null,
-    flightDate,
+    flightDate: extractDepartureDate(flight.dep_time) ?? flightDate,
     depTime: flight.dep_time ?? null,
     arrTime: flight.arr_actual ?? flight.arr_time ?? null,
     route: formatRoute(flight),

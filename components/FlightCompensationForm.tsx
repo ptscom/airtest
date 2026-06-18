@@ -2,8 +2,9 @@
 
 import { useState, FormEvent } from "react";
 import type { EligibilityResult } from "@/types/eligibility";
+import { getTodayInUae } from "@/lib/airlabs";
 
-const today = new Date().toISOString().slice(0, 10);
+const today = getTodayInUae();
 
 export default function FlightCompensationForm() {
   const [flightNumber, setFlightNumber] = useState("");
@@ -93,8 +94,9 @@ export default function FlightCompensationForm() {
             </div>
           </div>
           <p className="text-xs text-slate-500">
-            Enter the flight number and scheduled departure date. We look up that
-            specific flight using AirLabs historical data.
+            Enter the date on your ticket or boarding pass — not today&apos;s
+            date unless you flew today. EK569 operates daily, so the date must
+            be exact.
           </p>
 
           <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
@@ -269,8 +271,13 @@ export default function FlightCompensationForm() {
             <div className="rounded-lg border border-slate-200 bg-white/60 p-4">
               <h3 className="text-sm font-semibold text-slate-800">Flight</h3>
               <p className="mt-1 text-sm text-slate-600">
-                {flightNumber.toUpperCase()} on {result.flightDate}
+                {flightNumber.toUpperCase()} — departed {result.depTime}
               </p>
+              {result.flightDate && result.depTime && (
+                <p className="mt-1 text-xs text-slate-500">
+                  Confirmed date: {result.flightDate}
+                </p>
+              )}
               {result.route && (
                 <p className="mt-1 text-sm text-slate-500">{result.route}</p>
               )}
