@@ -3,6 +3,8 @@
 import { useState, FormEvent } from "react";
 import type { EligibilityResult } from "@/types/eligibility";
 
+const today = new Date().toISOString().slice(0, 10);
+
 export default function FlightCompensationForm() {
   const [flightNumber, setFlightNumber] = useState("");
   const [flightDate, setFlightDate] = useState("");
@@ -53,44 +55,47 @@ export default function FlightCompensationForm() {
     <div className="space-y-6">
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm shadow-slate-200/50">
         <form onSubmit={handleSubmit} className="space-y-5">
-          <div>
-            <label
-              htmlFor="flightNumber"
-              className="mb-1.5 block text-sm font-medium text-slate-700"
-            >
-              Flight Number
-            </label>
-            <input
-              id="flightNumber"
-              type="text"
-              required
-              placeholder="e.g., EK1"
-              value={flightNumber}
-              onChange={(e) => setFlightNumber(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-            />
-          </div>
+          <div className="grid gap-5 sm:grid-cols-2">
+            <div>
+              <label
+                htmlFor="flightNumber"
+                className="mb-1.5 block text-sm font-medium text-slate-700"
+              >
+                Flight Number
+              </label>
+              <input
+                id="flightNumber"
+                type="text"
+                required
+                placeholder="e.g., EK215"
+                value={flightNumber}
+                onChange={(e) => setFlightNumber(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </div>
 
-          <div>
-            <label
-              htmlFor="flightDate"
-              className="mb-1.5 block text-sm font-medium text-slate-700"
-            >
-              Flight Date
-            </label>
-            <input
-              id="flightDate"
-              type="date"
-              max={new Date().toISOString().slice(0, 10)}
-              value={flightDate}
-              onChange={(e) => setFlightDate(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-            />
-            <p className="mt-1 text-xs text-slate-500">
-              Optional. Used to verify the flight returned by AirLabs matches
-              your travel date (from <code className="text-slate-600">dep_time</code>).
-            </p>
+            <div>
+              <label
+                htmlFor="flightDate"
+                className="mb-1.5 block text-sm font-medium text-slate-700"
+              >
+                Flight Date
+              </label>
+              <input
+                id="flightDate"
+                type="date"
+                required
+                max={today}
+                value={flightDate}
+                onChange={(e) => setFlightDate(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </div>
           </div>
+          <p className="text-xs text-slate-500">
+            Enter the flight number and scheduled departure date. We look up that
+            specific flight using AirLabs historical data.
+          </p>
 
           <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
             <label
@@ -260,26 +265,34 @@ export default function FlightCompensationForm() {
             {result.message}
           </p>
 
-          {(result.flightDate || result.depTime) && (
-            <div className="mt-4 rounded-lg border border-slate-200 bg-white/60 p-4">
-              <h3 className="text-sm font-semibold text-slate-800">
-                Flight Checked
-              </h3>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-lg border border-slate-200 bg-white/60 p-4">
+              <h3 className="text-sm font-semibold text-slate-800">Flight</h3>
               <p className="mt-1 text-sm text-slate-600">
-                {flightNumber.toUpperCase()}
-                {result.depTime
-                  ? ` — scheduled departure ${result.depTime}`
-                  : result.flightDate
-                    ? ` on ${result.flightDate}`
-                    : ""}
+                {flightNumber.toUpperCase()} on {result.flightDate}
               </p>
+              {result.route && (
+                <p className="mt-1 text-sm text-slate-500">{result.route}</p>
+              )}
             </div>
-          )}
+
+            <div className="rounded-lg border border-slate-200 bg-white/60 p-4">
+              <h3 className="text-sm font-semibold text-slate-800">Status</h3>
+              <p className="mt-1 text-sm capitalize text-slate-600">
+                {result.status?.replace("-", " ") ?? "Unknown"}
+              </p>
+              {result.depTime && (
+                <p className="mt-1 text-sm text-slate-500">
+                  Departs {result.depTime}
+                </p>
+              )}
+            </div>
+          </div>
 
           {result.delayDuration !== null && (
             <div className="mt-4 rounded-lg border border-slate-200 bg-white/60 p-4">
               <h3 className="text-sm font-semibold text-slate-800">
-                Delay Duration
+                Arrival Delay
               </h3>
               <p className="mt-1 text-sm text-slate-600">
                 {result.delayDuration} minutes
@@ -325,8 +338,8 @@ export default function FlightCompensationForm() {
             />
           </svg>
           <p className="mt-3 text-sm text-slate-500">
-            Submit your flight details to see eligibility status, duty of care
-            entitlements, and financial compensation notes.
+            Enter your flight number and date to check eligibility under UAE
+            GCAA regulations.
           </p>
         </div>
       )}
