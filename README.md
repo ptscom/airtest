@@ -4,7 +4,7 @@ A Next.js application for checking flight compensation eligibility under UAE GCA
 
 ## Features
 
-- Flight eligibility checker with AirLabs flight data integration
+- Flight eligibility checker with Aviation Edge flight data integration
 - UAE GCAA duty of care entitlement calculations based on delay duration
 - Financial compensation guidance for out-of-pocket expenses
 - Clean, modern UI with blue and slate aviation-themed design
@@ -14,7 +14,7 @@ A Next.js application for checking flight compensation eligibility under UAE GCA
 ### Prerequisites
 
 - Node.js 18+
-- An [AirLabs API key](https://airlabs.co/)
+- An [Aviation Edge API key](https://aviation-edge.com/premium-api/)
 
 ### Setup
 
@@ -30,7 +30,7 @@ npm install
 cp .env.example .env.local
 ```
 
-3. Set `AIRLABS_API_KEY` in `.env.local`.
+3. Set `AVIATION_EDGE_API_KEY` in `.env.local`.
 
 4. Run the development server:
 
@@ -48,9 +48,12 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ```json
 {
-  "flightIata": "EK1",
+  "flightIata": "EK569",
+  "flightDate": "2026-06-17",
   "extraordinaryCircumstances": false,
-  "expenses": 500
+  "expenses": 500,
+  "isCancelled": false,
+  "arrDelayMinutes": 150
 }
 ```
 
@@ -59,10 +62,10 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ```json
 {
   "eligible": true,
-  "message": "Eligible for Duty of Care: Meals and Refreshments.",
+  "message": "Arrival delay of 150 minutes qualifies for Duty of Care entitlements.",
   "delayDuration": 150,
   "dutyOfCare": "Meals and Refreshments.",
-  "financialNote": "You are entitled to claim reimbursement for provable financial losses."
+  "financialNote": "You may be entitled to claim reimbursement for provable out-of-pocket financial losses."
 }
 ```
 
@@ -71,4 +74,4 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 - Next.js 16 (App Router)
 - TypeScript
 - Tailwind CSS
-- AirLabs Flight API
+- Aviation Edge Historical Schedules API

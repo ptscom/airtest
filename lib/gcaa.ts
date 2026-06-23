@@ -1,6 +1,6 @@
 import type { FlightData } from "@/types/flight";
 import type { EligibilityResult } from "@/types/eligibility";
-import { formatRoute } from "@/lib/airlabs";
+import { formatRoute } from "@/lib/aviation-edge";
 
 function getDutyOfCare(delayMinutes: number): {
   eligible: boolean;
