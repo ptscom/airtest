@@ -132,6 +132,10 @@ function matchesFlight(
   return codeshareIata === flightIata;
 }
 
+function normalizeIata(code: string | undefined): string | undefined {
+  return code?.trim().toUpperCase() || undefined;
+}
+
 function mapRecord(
   record: AeFlightRecord,
   source: FlightData["source"]
@@ -145,8 +149,8 @@ function mapRecord(
       record.arrival?.actualTime ?? record.arrival?.estimatedTime,
       arrDelay
     ),
-    dep_iata: record.departure?.iataCode,
-    arr_iata: record.arrival?.iataCode,
+    dep_iata: normalizeIata(record.departure?.iataCode),
+    arr_iata: normalizeIata(record.arrival?.iataCode),
     dep_time: formatAeTime(
       record.departure?.actualTime ?? record.departure?.scheduledTime
     ),
@@ -357,8 +361,8 @@ export async function fetchRouteAirports(
 
   const route = data[0];
   return {
-    dep_iata: route.departureIata,
-    arr_iata: route.arrivalIata,
+    dep_iata: normalizeIata(route.departureIata),
+    arr_iata: normalizeIata(route.arrivalIata),
   };
 }
 
@@ -409,9 +413,12 @@ export function touchesUaeAirport(flight: {
   dep_iata?: string;
   arr_iata?: string;
 }): boolean {
+  const dep = normalizeIata(flight.dep_iata);
+  const arr = normalizeIata(flight.arr_iata);
+
   return (
-    (flight.dep_iata != null && UAE_AIRPORTS.includes(flight.dep_iata)) ||
-    (flight.arr_iata != null && UAE_AIRPORTS.includes(flight.arr_iata))
+    (dep != null && UAE_AIRPORTS.includes(dep)) ||
+    (arr != null && UAE_AIRPORTS.includes(arr))
   );
 }
 
@@ -425,8 +432,8 @@ export function buildManualFlightData(input: {
   return {
     status: input.isCancelled ? "cancelled" : "landed",
     arr_delayed: input.isCancelled ? 0 : input.arrDelayMinutes,
-    dep_iata: input.depIata,
-    arr_iata: input.arrIata,
+    dep_iata: normalizeIata(input.depIata),
+    arr_iata: normalizeIata(input.arrIata),
     dep_time: `${input.flightDate} 00:00`,
     source: "manual",
   };
