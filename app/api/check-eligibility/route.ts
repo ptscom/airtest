@@ -6,7 +6,7 @@ import {
   isValidFlightDate,
   resolveFlightData,
   touchesUaeAirport,
-} from "@/lib/airlabs";
+} from "@/lib/aviation-edge";
 import { evaluateEligibility, notUaeEligibleResult } from "@/lib/gcaa";
 import type { FlightData } from "@/types/flight";
 
@@ -53,12 +53,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const apiKey = process.env.AIRLABS_API_KEY;
+    const apiKey = process.env.AVIATION_EDGE_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
         {
           message:
-            "Flight data service is not configured. Set AIRLABS_API_KEY in Vercel Project Settings → Environment Variables, then redeploy.",
+            "Flight data service is not configured. Set AVIATION_EDGE_API_KEY in Vercel Project Settings → Environment Variables, then redeploy.",
         },
         { status: 500 }
       );
@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
           {
             message:
               lookup.message ??
-              `No flight record found for ${normalizedFlight} on ${flightDate}. EK569 departs BLR at 04:45 local time (June 18) but June 17 in UTC — try both dates. You can also enter your delay manually below.`,
+              `No flight record found for ${normalizedFlight} on ${flightDate}. Try the UTC date if the local departure date differs. You can also enter your delay manually below.`,
           },
           { status: 404 }
         );

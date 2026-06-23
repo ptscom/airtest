@@ -6,5 +6,5 @@ export interface FlightData {
   dep_time?: string;
   arr_time?: string;
   arr_actual?: string;
-  source: "historical" | "schedules" | "live" | "manual";
+  source: "historical" | "live" | "manual";
 }

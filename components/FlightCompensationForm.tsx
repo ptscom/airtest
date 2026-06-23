@@ -2,7 +2,7 @@
 
 import { useState, FormEvent } from "react";
 import type { EligibilityResult } from "@/types/eligibility";
-import { getTodayInUae } from "@/lib/airlabs";
+import { getTodayInUae } from "@/lib/aviation-edge";
 
 const today = getTodayInUae();
 
@@ -113,8 +113,8 @@ export default function FlightCompensationForm() {
               Optional — only if automatic lookup fails
             </p>
             <p className="mt-1 text-xs text-slate-500">
-              Leave blank to fetch delay and status from AirLabs. Fill in only
-              if no record is found for your date.
+              Leave blank to fetch delay and status from Aviation Edge. Fill in
+              only if no record is found for your date.
             </p>
           </div>
 
@@ -340,14 +340,14 @@ export default function FlightCompensationForm() {
 
           {result.dataSource === "historical" && (
             <p className="mt-2 text-xs text-slate-500">
-              Delay and status fetched from AirLabs Historical API for your
-              selected date.
+              Delay and status fetched from Aviation Edge historical schedules
+              for your selected date.
             </p>
           )}
           {result.usedManualInput && (
             <p className="mt-2 text-xs text-slate-500">
               Eligibility calculated from your entered delay/cancellation details.
-              Route verified via AirLabs routes database.
+              Route verified via Aviation Edge routes database.
             </p>
           )}
 
