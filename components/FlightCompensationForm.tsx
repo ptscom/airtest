@@ -326,7 +326,7 @@ export default function FlightCompensationForm() {
                 result.eligible ? "text-green-800" : "text-amber-800"
               }`}
             >
-              {result.eligible ? "Eligible" : "Not Eligible"}
+              {result.headline}
             </h2>
           </div>
 
@@ -350,6 +350,34 @@ export default function FlightCompensationForm() {
               Route verified via Aviation Edge routes database.
             </p>
           )}
+
+          {result.regulatoryNotes.length > 0 && (
+            <div className="mt-4 space-y-2">
+              {result.regulatoryNotes.map((note) => (
+                <p
+                  key={note}
+                  className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900"
+                >
+                  {note}
+                </p>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <EligibilityPill
+              label="Ticket refund"
+              active={result.refundEligible}
+            />
+            <EligibilityPill
+              label="Duty of care"
+              active={result.dutyOfCareEligible}
+            />
+            <EligibilityPill
+              label="Expense claim"
+              active={result.expenseReimbursementPossible}
+            />
+          </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <div className="rounded-lg border border-slate-200 bg-white/60 p-4">
@@ -398,7 +426,7 @@ export default function FlightCompensationForm() {
           {result.financialNote && (
             <div className="mt-4 rounded-lg border border-slate-200 bg-white/60 p-4">
               <h3 className="text-sm font-semibold text-slate-800">
-                Financial Compensation
+                Out-of-Pocket Expenses
               </h3>
               <p className="mt-1 text-sm text-slate-600">
                 {result.financialNote}
@@ -429,6 +457,26 @@ export default function FlightCompensationForm() {
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+function EligibilityPill({
+  label,
+  active,
+}: {
+  label: string;
+  active: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-lg border px-3 py-2 text-center text-xs font-medium ${
+        active
+          ? "border-green-300 bg-green-100 text-green-800"
+          : "border-slate-200 bg-slate-50 text-slate-500"
+      }`}
+    >
+      {label}: {active ? "Yes" : "No"}
     </div>
   );
 }
