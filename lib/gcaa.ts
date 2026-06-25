@@ -2,6 +2,14 @@ import type { FlightData } from "@/types/flight";
 import type { EligibilityResult } from "@/types/eligibility";
 import { formatRoute } from "@/lib/aviation-edge";
 
+const US_DEPARTURE_AIRPORTS = new Set([
+  "ATL", "BOS", "CLT", "DEN", "DFW", "DTW", "EWR", "FLL", "HNL", "IAD",
+  "IAH", "JFK", "LAS", "LAX", "MCO", "MDW", "MIA", "MSP", "ORD", "PHL",
+  "PHX", "SAN", "SEA", "SFO", "SLC", "TPA",
+]);
+
+const DOT_REFUND_DELAY_MINUTES = 360;
+
 function getDutyOfCare(delayMinutes: number): {
   eligible: boolean;
   text: string;
@@ -30,6 +38,36 @@ function getDutyOfCare(delayMinutes: number): {
   };
 }
 
+function getRegulatoryNotes(
+  flight: FlightData,
+  status: string,
+  arrDelayed: number,
+  dutyOfCareEligible: boolean
+): string[] {
+  const notes: string[] = [];
+
+  if (status !== "cancelled" && dutyOfCareEligible) {
+    notes.push(
+      "A delay alone does not entitle you to a full ticket refund if you completed the journey. GCAA rules provide duty of care (meals, hotel, communication) — not automatic cash refunds for delays."
+    );
+  }
+
+  const dep = flight.dep_iata?.toUpperCase();
+  if (dep && US_DEPARTURE_AIRPORTS.has(dep) && status !== "cancelled") {
+    if (arrDelayed < DOT_REFUND_DELAY_MINUTES) {
+      notes.push(
+        `This flight departed the United States (${dep}). Under U.S. DOT rules, an automatic cash refund for an international delay typically requires a delay of 6+ hours and that you choose not to travel. Your ${arrDelayed}-minute delay is below that threshold.`
+      );
+    } else {
+      notes.push(
+        `This flight departed the United States (${dep}). Under U.S. DOT rules, you may have refund rights if the delay reached 6+ hours and you chose not to travel.`
+      );
+    }
+  }
+
+  return notes;
+}
+
 function getFinancialNote(
   extraordinaryCircumstances: boolean,
   expenses: number,
@@ -42,7 +80,7 @@ function getFinancialNote(
     return "Financial compensation is not owed due to the airline's claim of extraordinary circumstances.";
   }
   if (expenses > 0) {
-    return "You may be entitled to claim reimbursement for provable out-of-pocket financial losses.";
+    return "You may be able to claim reimbursement for provable out-of-pocket expenses (e.g. meals you paid for at the airport). This is not a ticket refund — keep receipts and submit to the airline.";
   }
   return null;
 }
@@ -55,29 +93,30 @@ export function evaluateEligibility(
   usedManualInput: boolean
 ): EligibilityResult {
   const { status, arr_delayed } = flight;
-  let eligible = false;
+  const isCancelled = status === "cancelled";
+  const dutyResult = getDutyOfCare(isCancelled ? 0 : arr_delayed);
+  const dutyOfCareEligible = isCancelled || dutyResult.eligible;
+  const refundEligible = isCancelled;
+  const expenseReimbursementPossible =
+    expenses > 0 && !extraordinaryCircumstances;
+
+  let headline = "Not Eligible";
   let message = "";
   let dutyOfCare: string | null = null;
-  let dutyOfCareEligible = false;
 
-  if (status === "cancelled") {
-    eligible = true;
-    dutyOfCareEligible = true;
+  if (isCancelled) {
+    headline = "Cancellation — Refund or Rebooking";
     message =
-      "This flight was cancelled. You may be eligible for a full ticket refund or free rebooking.";
+      "This flight was cancelled. You may be eligible for a full ticket refund or free rebooking under GCAA passenger welfare rules.";
     dutyOfCare =
       "Hotel accommodation if an overnight stay is required due to cancellation.";
-  } else {
-    const dutyResult = getDutyOfCare(arr_delayed);
+  } else if (dutyResult.eligible) {
+    headline = "Duty of Care Applies";
+    message = `Arrival delay of ${arr_delayed} minutes qualifies for GCAA duty of care (meals, refreshments, communication, etc.). This is not a ticket refund.`;
     dutyOfCare = dutyResult.text;
-    dutyOfCareEligible = dutyResult.eligible;
-    eligible = dutyResult.eligible;
-
-    if (dutyResult.eligible) {
-      message = `Arrival delay of ${arr_delayed} minutes qualifies for Duty of Care entitlements.`;
-    } else {
-      message = `Arrival delay of ${arr_delayed} minutes is below the 120-minute threshold required for Duty of Care.`;
-    }
+  } else {
+    message = `Arrival delay of ${arr_delayed} minutes is below the 120-minute threshold required for duty of care.`;
+    dutyOfCare = dutyResult.text;
   }
 
   if (usedManualInput) {
@@ -90,12 +129,27 @@ export function evaluateEligibility(
     dutyOfCareEligible
   );
 
-  if (financialNote && !extraordinaryCircumstances && expenses > 0) {
-    eligible = true;
+  if (expenseReimbursementPossible && !isCancelled && !dutyResult.eligible) {
+    headline = "Expense Reimbursement Possible";
   }
+
+  const regulatoryNotes = getRegulatoryNotes(
+    flight,
+    status ?? "unknown",
+    arr_delayed,
+    dutyOfCareEligible
+  );
+
+  const eligible =
+    refundEligible || dutyOfCareEligible || expenseReimbursementPossible;
 
   return {
     eligible,
+    headline,
+    refundEligible,
+    dutyOfCareEligible,
+    expenseReimbursementPossible,
+    regulatoryNotes,
     message,
     delayDuration: arr_delayed,
     dutyOfCare,
@@ -117,6 +171,11 @@ export function notUaeEligibleResult(
 ): EligibilityResult {
   return {
     eligible: false,
+    headline: "Not Eligible",
+    refundEligible: false,
+    dutyOfCareEligible: false,
+    expenseReimbursementPossible: false,
+    regulatoryNotes: [],
     message: "Flight must touch a UAE airport (DXB, AUH, SHJ, DWC, RKT, or AAN).",
     delayDuration: flight.arr_delayed,
     dutyOfCare: null,
