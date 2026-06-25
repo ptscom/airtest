@@ -1,6 +1,12 @@
 import type { FlightData } from "@/types/flight";
+import type {
+  HistoricalFlightSummary,
+  HistoricalFlightsResponse,
+  HistoricalQueryResult,
+} from "@/types/historical-flight";
 
-const UAE_AIRPORTS = ["DXB", "AUH", "SHJ", "DWC", "RKT", "AAN"];
+export const UAE_AIRPORT_CODES = ["DXB", "AUH", "SHJ", "DWC", "RKT", "AAN"] as const;
+const UAE_AIRPORTS = [...UAE_AIRPORT_CODES];
 const UAE_TIMEZONE = "Asia/Dubai";
 const RECENT_FLIGHT_DAYS = 3;
 const BASE_URL = "https://aviation-edge.com/v2/public";
@@ -417,8 +423,8 @@ export function touchesUaeAirport(flight: {
   const arr = normalizeIata(flight.arr_iata);
 
   return (
-    (dep != null && UAE_AIRPORTS.includes(dep)) ||
-    (arr != null && UAE_AIRPORTS.includes(arr))
+    (dep != null && (UAE_AIRPORT_CODES as readonly string[]).includes(dep)) ||
+    (arr != null && (UAE_AIRPORT_CODES as readonly string[]).includes(arr))
   );
 }
 
@@ -442,4 +448,183 @@ export function buildManualFlightData(input: {
 export function formatRoute(flight: FlightData): string | null {
   if (!flight.dep_iata && !flight.arr_iata) return null;
   return `${flight.dep_iata ?? "?"} → ${flight.arr_iata ?? "?"}`;
+}
+
+function recordToSummary(
+  record: AeFlightRecord,
+  uaeAirport: string,
+  queryType: "arrival" | "departure"
+): HistoricalFlightSummary {
+  const depDelay = parseDelay(record.departure?.delay);
+  const arrDelay = parseDelay(record.arrival?.delay);
+
+  return {
+    flightIata: record.flight?.iataNumber?.toUpperCase() ?? "UNKNOWN",
+    airline: record.airline?.iataCode?.toUpperCase() ?? null,
+    departure: normalizeIata(record.departure?.iataCode) ?? null,
+    arrival: normalizeIata(record.arrival?.iataCode) ?? null,
+    status: record.status ?? "unknown",
+    flightDate: extractDateFromDateTime(
+      record.departure?.scheduledTime ?? record.departure?.actualTime
+    ),
+    depScheduled: formatAeTime(record.departure?.scheduledTime) ?? null,
+    arrScheduled: formatAeTime(record.arrival?.scheduledTime) ?? null,
+    depDelay,
+    arrDelay,
+    uaeAirport,
+    queryType,
+  };
+}
+
+function flightDedupKey(flight: HistoricalFlightSummary): string {
+  return [
+    flight.flightIata,
+    flight.depScheduled ?? "",
+    flight.departure ?? "",
+    flight.arrival ?? "",
+  ].join("|");
+}
+
+export function getDateRangeDays(dateFrom: string, dateTo: string): number {
+  return daysBetween(dateFrom, dateTo) + 1;
+}
+
+export function shiftDateBack(days: number, fromDate?: string): string {
+  return shiftDate(fromDate ?? getTodayInUae(), -days);
+}
+
+async function fetchAirportHistory(
+  airport: string,
+  type: "arrival" | "departure",
+  dateFrom: string,
+  dateTo: string,
+  apiKey: string,
+  filters: { airlineIata?: string; status?: string }
+): Promise<{ records: AeFlightRecord[]; error?: string }> {
+  const params: Record<string, string> = {
+    code: airport,
+    type,
+    date_from: dateFrom,
+    date_to: dateTo,
+  };
+
+  if (filters.airlineIata) params.airline_iata = filters.airlineIata;
+  if (filters.status) params.status = filters.status;
+
+  const search = new URLSearchParams({ key: apiKey, ...params });
+  const response = await fetch(
+    `${BASE_URL}/flightsHistory?${search.toString()}`,
+    { next: { revalidate: 0 } }
+  );
+
+  if (!response.ok) {
+    return { records: [], error: `HTTP ${response.status}` };
+  }
+
+  const data = await response.json();
+  if (!data) return { records: [], error: "Empty response" };
+  if (data.error) {
+    return {
+      records: [],
+      error:
+        typeof data.error === "string"
+          ? data.error
+          : data.error.message ?? "API error",
+    };
+  }
+
+  return { records: Array.isArray(data) ? data : [] };
+}
+
+export async function fetchUaeHistoricalFlights(options: {
+  dateFrom: string;
+  dateTo: string;
+  apiKey: string;
+  airports?: string[];
+  airlineIata?: string;
+  status?: string;
+}): Promise<HistoricalFlightsResponse> {
+  const {
+    dateFrom,
+    dateTo,
+    apiKey,
+    airlineIata,
+    status,
+    airports = [...UAE_AIRPORT_CODES],
+  } = options;
+
+  const filters = { airlineIata, status };
+  const queries: HistoricalQueryResult[] = [];
+  const allFlights: HistoricalFlightSummary[] = [];
+
+  const tasks: Array<{
+    airport: string;
+    type: "arrival" | "departure";
+  }> = [];
+
+  for (const airport of airports) {
+    tasks.push({ airport, type: "arrival" });
+    tasks.push({ airport, type: "departure" });
+  }
+
+  const results = await Promise.all(
+    tasks.map(async ({ airport, type }) => {
+      const { records, error } = await fetchAirportHistory(
+        airport,
+        type,
+        dateFrom,
+        dateTo,
+        apiKey,
+        filters
+      );
+
+      return { airport, type, records, error };
+    })
+  );
+
+  for (const { airport, type, records, error } of results) {
+    queries.push({
+      airport,
+      type,
+      count: records.length,
+      error,
+    });
+
+    for (const record of records) {
+      allFlights.push(recordToSummary(record, airport, type));
+    }
+  }
+
+  const seen = new Set<string>();
+  const uniqueFlights: HistoricalFlightSummary[] = [];
+
+  for (const flight of allFlights) {
+    const key = flightDedupKey(flight);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniqueFlights.push(flight);
+  }
+
+  uniqueFlights.sort((a, b) => {
+    const dateCompare = (b.flightDate ?? "").localeCompare(a.flightDate ?? "");
+    if (dateCompare !== 0) return dateCompare;
+    return a.flightIata.localeCompare(b.flightIata);
+  });
+
+  const cancelledCount = uniqueFlights.filter(
+    (f) => f.status === "cancelled"
+  ).length;
+  const delayedCount = uniqueFlights.filter(
+    (f) => (f.arrDelay ?? 0) >= 120 || (f.depDelay ?? 0) >= 120
+  ).length;
+
+  return {
+    flights: uniqueFlights,
+    queries,
+    dateFrom,
+    dateTo,
+    totalUnique: uniqueFlights.length,
+    cancelledCount,
+    delayedCount,
+  };
 }

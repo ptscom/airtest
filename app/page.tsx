@@ -31,6 +31,13 @@ export default function Home() {
         </header>
 
         <FlightCompensationForm />
+
+        <p className="mt-8 text-center text-xs text-slate-500">
+          <a href="/test/historical" className="text-blue-600 hover:underline">
+            Historical data test page
+          </a>{" "}
+          — browse Aviation Edge UAE flight records for cross-checking.
+        </p>
       </div>
     </main>
   );
