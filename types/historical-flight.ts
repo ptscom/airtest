@@ -16,8 +16,10 @@ export interface HistoricalFlightSummary {
 export interface HistoricalQueryResult {
   airport: string;
   type: "arrival" | "departure";
+  date: string;
   count: number;
   error?: string;
+  sampleUrl?: string;
 }
 
 export interface HistoricalFlightsResponse {
@@ -28,4 +30,6 @@ export interface HistoricalFlightsResponse {
   totalUnique: number;
   cancelledCount: number;
   delayedCount: number;
+  totalApiCalls: number;
+  warnings: string[];
 }
