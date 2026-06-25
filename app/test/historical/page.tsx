@@ -10,11 +10,11 @@ import {
 import type { HistoricalFlightsResponse } from "@/types/historical-flight";
 
 const today = getTodayInUae();
-const defaultFrom = shiftDateBack(29);
+const yesterday = shiftDateBack(1);
 
 export default function HistoricalTestPage() {
-  const [dateFrom, setDateFrom] = useState(defaultFrom);
-  const [dateTo, setDateTo] = useState(today);
+  const [dateFrom, setDateFrom] = useState(yesterday);
+  const [dateTo, setDateTo] = useState(yesterday);
   const [airport, setAirport] = useState("ALL");
   const [airlineIata, setAirlineIata] = useState("");
   const [status, setStatus] = useState("");
@@ -170,9 +170,10 @@ export default function HistoricalTestPage() {
           </div>
 
           <p className="mt-3 text-xs text-slate-500">
-            Makes 2 API calls per airport (arrivals + departures). All 6 UAE
-            airports = 12 calls. Large ranges can take 30–60 seconds and use
-            many API credits.
+            Queries one day at a time per airport (more reliable than a single
+            30-day bulk call). All 6 UAE airports for 7 days = 84 API calls. Start
+            with <strong>one day + one airport</strong> (e.g. AUH, yesterday) to
+            verify your API key works.
           </p>
         </div>
 
@@ -190,28 +191,43 @@ export default function HistoricalTestPage() {
               <StatCard label="Delayed ≥120m" value={data.delayedCount} />
               <StatCard
                 label="API queries"
-                value={data.queries.length}
+                value={data.totalApiCalls}
                 hint={`${data.dateFrom} → ${data.dateTo}`}
               />
             </div>
+
+            {data.warnings.length > 0 && (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                {data.warnings.map((warning) => (
+                  <p key={warning}>{warning}</p>
+                ))}
+              </div>
+            )}
 
             <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4">
               <h2 className="mb-2 text-sm font-semibold text-slate-800">
                 Query breakdown
               </h2>
-              <div className="flex flex-wrap gap-2">
+              <div className="max-h-48 space-y-1 overflow-y-auto">
                 {data.queries.map((query) => (
-                  <span
-                    key={`${query.airport}-${query.type}`}
-                    className={`rounded-full px-2.5 py-1 text-xs ${
+                  <div
+                    key={`${query.airport}-${query.type}-${query.date}`}
+                    className={`rounded px-2 py-1 text-xs ${
                       query.error
-                        ? "bg-red-100 text-red-700"
-                        : "bg-slate-100 text-slate-700"
+                        ? "bg-red-50 text-red-700"
+                        : query.count === 0
+                          ? "bg-amber-50 text-amber-800"
+                          : "bg-slate-100 text-slate-700"
                     }`}
                   >
-                    {query.airport} {query.type}: {query.count}
-                    {query.error ? ` (${query.error})` : ""}
-                  </span>
+                    {query.date} · {query.airport} {query.type}: {query.count}
+                    {query.error ? ` — ${query.error}` : ""}
+                    {query.sampleUrl && (
+                      <span className="ml-1 text-slate-500">
+                        ({query.sampleUrl})
+                      </span>
+                    )}
+                  </div>
                 ))}
               </div>
             </div>

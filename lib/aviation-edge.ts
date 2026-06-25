@@ -493,19 +493,134 @@ export function shiftDateBack(days: number, fromDate?: string): string {
   return shiftDate(fromDate ?? getTodayInUae(), -days);
 }
 
+export function eachDayInRange(dateFrom: string, dateTo: string): string[] {
+  const days: string[] = [];
+  let current = dateFrom;
+
+  while (current <= dateTo) {
+    days.push(current);
+    current = shiftDate(current, 1);
+  }
+
+  return days;
+}
+
+function buildHistoryUrl(
+  airport: string,
+  type: "arrival" | "departure",
+  date: string,
+  filters: { airlineIata?: string; status?: string }
+): string {
+  const params = new URLSearchParams({
+    code: airport,
+    type,
+    date_from: date,
+  });
+
+  if (filters.airlineIata) params.set("airline_iata", filters.airlineIata);
+  if (filters.status) params.set("status", filters.status);
+
+  return `${BASE_URL}/flightsHistory?key=***&${params.toString()}`;
+}
+
+function parseHistoryResponse(
+  data: unknown
+): { records: AeFlightRecord[]; error?: string } {
+  if (Array.isArray(data)) {
+    return { records: data };
+  }
+
+  if (data && typeof data === "object") {
+    const obj = data as Record<string, unknown>;
+
+    if (obj.error) {
+      const message =
+        typeof obj.error === "string"
+          ? obj.error
+          : typeof obj.error === "object" &&
+              obj.error &&
+              "message" in obj.error &&
+              typeof (obj.error as { message?: string }).message === "string"
+            ? (obj.error as { message: string }).message
+            : JSON.stringify(obj.error);
+
+      return { records: [], error: message };
+    }
+
+    if (Array.isArray(obj.data)) {
+      return { records: obj.data as AeFlightRecord[] };
+    }
+
+    if (Array.isArray(obj.response)) {
+      return { records: obj.response as AeFlightRecord[] };
+    }
+
+    return {
+      records: [],
+      error: `Unexpected response: ${JSON.stringify(data).slice(0, 180)}`,
+    };
+  }
+
+  return { records: [], error: "Empty response from Aviation Edge" };
+}
+
 async function fetchAirportHistory(
   airport: string,
   type: "arrival" | "departure",
-  dateFrom: string,
-  dateTo: string,
+  date: string,
   apiKey: string,
   filters: { airlineIata?: string; status?: string }
-): Promise<{ records: AeFlightRecord[]; error?: string }> {
+): Promise<{
+  records: AeFlightRecord[];
+  error?: string;
+  sampleUrl: string;
+}> {
   const params: Record<string, string> = {
     code: airport,
     type,
-    date_from: dateFrom,
-    date_to: dateTo,
+    date_from: date,
+  };
+
+  if (filters.airlineIata) params.airline_iata = filters.airlineIata;
+  if (filters.status) params.status = filters.status;
+
+  const sampleUrl = buildHistoryUrl(airport, type, date, filters);
+  const search = new URLSearchParams({ key: apiKey, ...params });
+
+  const response = await fetch(
+    `${BASE_URL}/flightsHistory?${search.toString()}`,
+    { next: { revalidate: 0 } }
+  );
+
+  if (response.status === 404) {
+    return { records: [], sampleUrl };
+  }
+
+  if (!response.ok) {
+    const body = await response.text();
+    return {
+      records: [],
+      error: `HTTP ${response.status}${body ? `: ${body.slice(0, 120)}` : ""}`,
+      sampleUrl,
+    };
+  }
+
+  const data = await response.json();
+  const parsed = parseHistoryResponse(data);
+
+  return { ...parsed, sampleUrl };
+}
+
+async function fetchTimetableForAirport(
+  airport: string,
+  type: "arrival" | "departure",
+  date: string,
+  apiKey: string,
+  filters: { airlineIata?: string; status?: string }
+): Promise<AeFlightRecord[]> {
+  const params: Record<string, string> = {
+    iataCode: airport,
+    type,
   };
 
   if (filters.airlineIata) params.airline_iata = filters.airlineIata;
@@ -513,27 +628,42 @@ async function fetchAirportHistory(
 
   const search = new URLSearchParams({ key: apiKey, ...params });
   const response = await fetch(
-    `${BASE_URL}/flightsHistory?${search.toString()}`,
+    `${BASE_URL}/timetable?${search.toString()}`,
     { next: { revalidate: 0 } }
   );
 
-  if (!response.ok) {
-    return { records: [], error: `HTTP ${response.status}` };
-  }
+  if (!response.ok) return [];
 
   const data = await response.json();
-  if (!data) return { records: [], error: "Empty response" };
-  if (data.error) {
-    return {
-      records: [],
-      error:
-        typeof data.error === "string"
-          ? data.error
-          : data.error.message ?? "API error",
-    };
+  if (!Array.isArray(data)) return [];
+
+  return data.filter((record: AeFlightRecord) =>
+    recordMatchesDate(record, date)
+  );
+}
+
+async function runWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  let index = 0;
+
+  async function runNext(): Promise<void> {
+    const current = index++;
+    if (current >= items.length) return;
+    results[current] = await worker(items[current]);
+    await runNext();
   }
 
-  return { records: Array.isArray(data) ? data : [] };
+  const runners = Array.from(
+    { length: Math.min(limit, items.length) },
+    () => runNext()
+  );
+  await Promise.all(runners);
+
+  return results;
 }
 
 export async function fetchUaeHistoricalFlights(options: {
@@ -556,38 +686,68 @@ export async function fetchUaeHistoricalFlights(options: {
   const filters = { airlineIata, status };
   const queries: HistoricalQueryResult[] = [];
   const allFlights: HistoricalFlightSummary[] = [];
+  const warnings: string[] = [];
+  const today = getTodayInUae();
+  const days = eachDayInRange(dateFrom, dateTo);
 
   const tasks: Array<{
     airport: string;
     type: "arrival" | "departure";
+    date: string;
+    useTimetable: boolean;
   }> = [];
 
-  for (const airport of airports) {
-    tasks.push({ airport, type: "arrival" });
-    tasks.push({ airport, type: "departure" });
+  for (const date of days) {
+    const useTimetable = isRecentFlightDate(date, today);
+
+    for (const airport of airports) {
+      tasks.push({ airport, type: "arrival", date, useTimetable });
+      tasks.push({ airport, type: "departure", date, useTimetable });
+    }
   }
 
-  const results = await Promise.all(
-    tasks.map(async ({ airport, type }) => {
-      const { records, error } = await fetchAirportHistory(
-        airport,
-        type,
-        dateFrom,
-        dateTo,
+  const results = await runWithConcurrency(tasks, 4, async (task) => {
+    const history = await fetchAirportHistory(
+      task.airport,
+      task.type,
+      task.date,
+      apiKey,
+      filters
+    );
+
+    let records = history.records;
+
+    if (records.length === 0 && task.useTimetable) {
+      const timetableRecords = await fetchTimetableForAirport(
+        task.airport,
+        task.type,
+        task.date,
         apiKey,
         filters
       );
+      if (timetableRecords.length > 0) {
+        records = timetableRecords;
+      }
+    }
 
-      return { airport, type, records, error };
-    })
-  );
+    return {
+      airport: task.airport,
+      type: task.type,
+      date: task.date,
+      records,
+      error: history.error,
+      sampleUrl: history.sampleUrl,
+    };
+  });
 
-  for (const { airport, type, records, error } of results) {
+  for (const { airport, type, date, records, error, sampleUrl } of results) {
     queries.push({
       airport,
       type,
+      date,
       count: records.length,
       error,
+      sampleUrl,
     });
 
     for (const record of records) {
@@ -618,6 +778,23 @@ export async function fetchUaeHistoricalFlights(options: {
     (f) => (f.arrDelay ?? 0) >= 120 || (f.depDelay ?? 0) >= 120
   ).length;
 
+  const errors = queries.filter((query) => query.error);
+  const zeroResults = queries.filter((query) => query.count === 0 && !query.error);
+
+  if (uniqueFlights.length === 0 && errors.length > 0) {
+    warnings.push(
+      `All ${errors.length} queries returned errors. Check your API key and subscription includes Historical Schedules.`
+    );
+  } else if (uniqueFlights.length === 0 && zeroResults.length === queries.length) {
+    warnings.push(
+      "Aviation Edge returned empty arrays for every query. Try a single recent day (e.g. yesterday), one airport (AUH), and no filters first."
+    );
+  }
+
+  if (days.some((day) => day > today)) {
+    warnings.push("Future dates were excluded — historical data only exists for past dates.");
+  }
+
   return {
     flights: uniqueFlights,
     queries,
@@ -626,5 +803,7 @@ export async function fetchUaeHistoricalFlights(options: {
     totalUnique: uniqueFlights.length,
     cancelledCount,
     delayedCount,
+    totalApiCalls: queries.length,
+    warnings,
   };
 }
