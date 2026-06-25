@@ -28,15 +28,26 @@ export default function Home() {
             Determine your eligibility for duty of care and financial
             compensation under UAE aviation regulations.
           </p>
+          <p className="mt-3">
+            <a
+              href="/rules"
+              className="text-sm font-medium text-blue-600 hover:underline"
+            >
+              Read the full rules &amp; official sources →
+            </a>
+          </p>
         </header>
 
         <FlightCompensationForm />
 
         <p className="mt-8 text-center text-xs text-slate-500">
+          <a href="/rules" className="text-blue-600 hover:underline">
+            Passenger rights &amp; rules
+          </a>
+          {" · "}
           <a href="/test/historical" className="text-blue-600 hover:underline">
             Historical data test page
-          </a>{" "}
-          — browse Aviation Edge UAE flight records for cross-checking.
+          </a>
         </p>
       </div>
     </main>
